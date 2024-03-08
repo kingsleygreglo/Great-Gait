@@ -1,0 +1,163 @@
+import cv2
+import os
+import mediapipe as mp
+import csv
+import pandas as pd
+
+
+class LandmarkProcessor:
+    def __init__(self, landmarks_file):
+        self.landmarks_file = landmarks_file
+
+    def calculate_velocity(self):
+        # Load the landmarks data
+        landmarks_data = pd.read_csv(self.landmarks_file)
+
+        # Calculate the first derivative (velocity) for each landmark
+        velocity_data = landmarks_data.diff()
+        velocity_data['frame'] = landmarks_data['frame']  # Preserve the frame column
+
+        # Save the velocity data to a CSV file
+        velocity_data.to_csv('velocity.csv', index=False)
+
+    def calculate_acceleration(self):
+        # Load the landmarks data
+        landmarks_data = pd.read_csv(self.landmarks_file)
+
+        # Calculate the second derivative (acceleration) for each landmark
+        acceleration_data = landmarks_data.diff().diff()
+        acceleration_data['frame'] = landmarks_data['frame']  # Preserve the frame column
+
+        # Save the acceleration data to a CSV file
+        acceleration_data.to_csv('acceleration.csv', index=False)
+
+
+# Initialize MediaPipe pose estimation
+mp_pose = mp.solutions.pose
+
+# Configure pose detection parameters
+pose = mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.8, min_tracking_confidence=0.8)
+
+# Create directories to save frames and landmarks if they don't exist
+if not os.path.exists('frames'):
+    os.makedirs('frames')
+if not os.path.exists('landmarks'):
+    os.makedirs('landmarks')
+
+# Load video with any format
+video_path = '../videos/Testing Locally/Ian1.mp4'
+if not os.path.isfile(video_path):
+    print("Video file not found.")
+    exit()
+
+# Open the video file for reading
+cap = cv2.VideoCapture(video_path)
+
+# Get frame dimensions and frame rate of the video
+frame_width = int(cap.get(3))
+frame_height = int(cap.get(4))
+frame_rate = cap.get(cv2.CAP_PROP_FPS)
+size = (frame_width, frame_height)
+
+# Prepare to save the processed video
+result = cv2.VideoWriter('processed_video.avi',
+                         cv2.VideoWriter_fourcc(*'MJPG'),
+                         frame_rate, size)
+
+# Define landmark names for body parts. We have 33 main landmarks in the mp_pose package
+landmark_names = [
+    'NOSE',
+    'LEFT_EYE_INNER', 'LEFT_EYE', 'LEFT_EYE_OUTER',
+    'RIGHT_EYE_INNER', 'RIGHT_EYE', 'RIGHT_EYE_OUTER',
+    'LEFT_EAR', 'RIGHT_EAR',
+    'MOUTH_LEFT', 'MOUTH_RIGHT',
+    'LEFT_SHOULDER', 'RIGHT_SHOULDER',
+    'LEFT_ELBOW', 'RIGHT_ELBOW',
+    'LEFT_WRIST', 'RIGHT_WRIST',
+    'LEFT_PINKY', 'RIGHT_PINKY',
+    'LEFT_INDEX', 'RIGHT_INDEX',
+    'LEFT_THUMB', 'RIGHT_THUMB',
+    'LEFT_HIP', 'RIGHT_HIP',
+    'LEFT_KNEE', 'RIGHT_KNEE',
+    'LEFT_ANKLE', 'RIGHT_ANKLE',
+    'LEFT_HEEL', 'RIGHT_HEEL',
+    'LEFT_FOOT_INDEX', 'RIGHT_FOOT_INDEX'
+]
+
+# Initialize frame count
+frame_count = 0
+
+# Open a CSV file to write landmark data, record the position of landmarks
+with open('landmarks.csv', 'w', newline='') as csvfile:
+    csvwriter = csv.writer(csvfile)
+
+    # Write the header row with landmark names. Each landmark has X, Y, and Z coordinates
+    header = ['frame']
+    for name in landmark_names:
+        header.extend([f'X:{name}', f'Y:{name}', f'Z:{name}'])
+    csvwriter.writerow(header)
+
+    # Loop through each frame of the video
+    while True:
+        # Read a frame from the video
+        ret, frame = cap.read()
+
+        # If no frame is read, exit the loop
+        if not ret:
+            break
+
+        # Convert the frame to RGB format for MediaPipe
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Process the frame with MediaPipe pose estimation
+        results = pose.process(frame_rgb)
+
+        # Get the landmarks detected in the frame
+        landmarks = results.pose_landmarks
+        if landmarks is not None:
+            # Prepare a row of landmark data for the CSV file
+            landmarks_row = [frame_count]
+            for landmark in landmarks.landmark:
+                # Convert normalized coordinates to pixel coordinates
+                x = int(landmark.x * frame_width)
+                y = int(landmark.y * frame_height)
+                z = landmark.z
+
+                # Add X, Y, and Z coordinates of each landmark to the row
+                landmarks_row.extend([x, y, z])
+            # Write the row of landmark data to the CSV file
+            csvwriter.writerow(landmarks_row)
+
+        # Draw the skeleton on the frame and save to the processed video
+        if landmarks is not None:
+            mp_drawing = mp.solutions.drawing_utils
+
+            # Draw landmarks on the frame
+            mp_drawing.draw_landmarks(frame, landmarks, mp_pose.POSE_CONNECTIONS)
+
+            # Write the frame to the processed video
+            result.write(frame)
+
+        # Save the original frame as an image file
+        cv2.imwrite(os.path.join('frames', f'frame_{frame_count}.png'), frame)
+
+        # Increment the frame count
+        frame_count += 1
+
+# Release video capture and video writer objects
+cap.release()
+result.release()
+
+# Release MediaPipe resources
+pose.close()
+
+# Close the CSV file
+csvfile.close()
+
+# Close all OpenCV windows
+cv2.destroyAllWindows()
+
+# Create LandmarkProcessor instance and calculate velocity and acceleration
+processor = LandmarkProcessor('landmarks.csv')
+processor.calculate_velocity()
+processor.calculate_acceleration()
